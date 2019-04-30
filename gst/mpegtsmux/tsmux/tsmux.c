@@ -1080,7 +1080,7 @@ pad_stream (TsMux * mux, TsMuxStream * stream, gint64 cur_ts)
         GST_LOG ("Transport stream bitrate: %" G_GUINT64_FORMAT, bitrate);
 
         if (bitrate < mux->bitrate) {
-          GST_LOG_OBJECT (mux, "Padding transport stream");
+          GST_LOG ("Padding transport stream");
 
           if (!tsmux_get_buffer (mux, &buf)) {
             ret = FALSE;
