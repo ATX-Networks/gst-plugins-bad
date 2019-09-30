@@ -2497,8 +2497,12 @@ gst_dash_demux_update_manifest_data (GstAdaptiveDemux * demux,
             GST_TIME_FORMAT, GST_TIME_ARGS (ts),
             GST_TIME_ARGS (ts + (10 * GST_USECOND)));
         ts += 10 * GST_USECOND;
-        gst_mpd_client_stream_seek (new_client, new_stream,
-            demux->segment.rate >= 0, 0, ts, NULL);
+        if (!gst_mpd_client_stream_seek (new_client, new_stream,
+                demux->segment.rate >= 0, 0, ts, NULL)) {
+          gst_mpd_client_free (new_client);
+          gst_buffer_unmap (buffer, &mapinfo);
+          return GST_FLOW_EOS;
+        };
       }
 
       demux_stream->active_stream = new_stream;
