@@ -3350,7 +3350,7 @@ gst_mpdparser_build_URL_from_template (const gchar * url_template,
       if (!validate_format (format))
         goto invalid_format;
 
-      tokens[i] = g_strdup_printf (format, number);
+      tokens[i] = g_strdup_printf (format, (long long) number);
       g_free (token);
     } else if (!strncmp (token, "Bandwidth", 9)) {
       if (strlen (token) > 9) {
@@ -3915,7 +3915,6 @@ gst_mpd_client_add_media_segment (GstActiveStream * stream,
   g_return_val_if_fail (stream->segments != NULL, FALSE);
 
   media_segment = g_slice_new0 (GstMediaSegment);
-
   media_segment->SegmentURL = url_node;
   media_segment->number = number;
   media_segment->scale_start = scale_start;
@@ -3925,7 +3924,7 @@ gst_mpd_client_add_media_segment (GstActiveStream * stream,
   media_segment->repeat = repeat;
 
   g_ptr_array_add (stream->segments, media_segment);
-  GST_LOG ("Added new segment: number %d, repeat %d, "
+  GST_DEBUG ("Added new segment: number %d, repeat %d, "
       "ts: %" GST_TIME_FORMAT ", dur: %"
       GST_TIME_FORMAT, number, repeat,
       GST_TIME_ARGS (start), GST_TIME_ARGS (duration));
@@ -4839,11 +4838,31 @@ gst_mpd_client_stream_seek (GstMpdClient * client, GstActiveStream * stream,
       else
         in_segment = ts <= end_time;
 
+      if (selectedChunk == NULL && in_segment && ts < segment->start) {
+        /* TODO: should *also* maybe check for index == 0 to avoid unintended side-effects */
+        // in_segment = false;
+        GST_DEBUG
+            ("No current segment covers current time (likely upstream restart) ts = %"
+            GST_TIME_FORMAT " start=%" GST_TIME_FORMAT, GST_TIME_ARGS (ts),
+            GST_TIME_ARGS (segment->start)
+            );
+        selectedChunk = segment;
+        stream->segment_repeat_index = 0;
+        stream->segment_index = index;
+        return FALSE;
+        // ts = segment->start;
+      }
+
       if (in_segment) {
         GstClockTime chunk_time;
 
         selectedChunk = segment;
         repeat_index = (ts - segment->start) / segment->duration;
+        GST_DEBUG ("delta %ld duration %lu produced repeat_index of %d",
+            (ts - segment->start), segment->duration, repeat_index);
+        if (repeat_index > selectedChunk->repeat) {
+          repeat_index = selectedChunk->repeat;
+        }
 
         chunk_time = segment->start + segment->duration * repeat_index;
 
@@ -5182,7 +5201,10 @@ gst_mpd_client_get_next_fragment (GstMpdClient * client,
   if (stream->segments) {
     currentChunk = g_ptr_array_index (stream->segments, stream->segment_index);
 
-    GST_DEBUG ("currentChunk->SegmentURL = %p", currentChunk->SegmentURL);
+    GST_DEBUG
+        ("currentChunk->SegmentURL = %p currentChunk->number = %u, segment repeat index = %u",
+        currentChunk->SegmentURL, currentChunk->number,
+        stream->segment_repeat_index);
     if (currentChunk->SegmentURL != NULL) {
       mediaURL =
           g_strdup (gst_mpdparser_get_mediaURL (stream,
