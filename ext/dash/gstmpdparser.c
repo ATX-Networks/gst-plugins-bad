@@ -4838,7 +4838,7 @@ gst_mpd_client_stream_seek (GstMpdClient * client, GstActiveStream * stream,
       else
         in_segment = ts <= end_time;
 
-      if (selectedChunk == NULL && in_segment && ts < segment->start) {
+      if (forward && selectedChunk == NULL && in_segment && ts < segment->start) {
         /* TODO: should *also* maybe check for index == 0 to avoid unintended side-effects */
         // in_segment = false;
         GST_DEBUG
@@ -4846,11 +4846,11 @@ gst_mpd_client_stream_seek (GstMpdClient * client, GstActiveStream * stream,
             GST_TIME_FORMAT " start=%" GST_TIME_FORMAT, GST_TIME_ARGS (ts),
             GST_TIME_ARGS (segment->start)
             );
-        selectedChunk = segment;
-        stream->segment_repeat_index = 0;
-        stream->segment_index = index;
-        return FALSE;
-        // ts = segment->start;
+        // selectedChunk = segment;
+        // stream->segment_repeat_index = 0;
+        // stream->segment_index = index;
+        // return FALSE;
+        ts = segment->start;
       }
 
       if (in_segment) {
