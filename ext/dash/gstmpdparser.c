@@ -2107,6 +2107,7 @@ gst_mpdparser_parse_segment_template_node (GstSegmentTemplateNode ** pointer,
   }
 
   if (gst_mpdparser_get_xml_prop_string (a_node, "index", &strval)) {
+    GST_DEBUG ("Index url %s", strval);
     new_segment_template->index = strval;
   } else if (parent) {
     new_segment_template->index = xmlMemStrdup (parent->index);
@@ -4832,6 +4833,9 @@ gst_mpd_client_stream_seek (GstMpdClient * client, GstActiveStream * stream,
           gst_mpdparser_get_segment_end_time (client, stream->segments,
           segment, index);
 
+      GST_DEBUG ("Segment start=%" GST_TIME_FORMAT " end=%" GST_TIME_FORMAT,
+          GST_TIME_ARGS (segment->start), GST_TIME_ARGS (end_time));
+
       /* avoid downloading another fragment just for 1ns in reverse mode */
       if (forward)
         in_segment = ts < end_time;
@@ -4861,6 +4865,8 @@ gst_mpd_client_stream_seek (GstMpdClient * client, GstActiveStream * stream,
         GST_DEBUG ("delta %ld duration %lu produced repeat_index of %d",
             (ts - segment->start), segment->duration, repeat_index);
         if (repeat_index > selectedChunk->repeat) {
+          GST_DEBUG ("Repeat index %d > chunk repeat count %d", repeat_index,
+              selectedChunk->repeat);
           repeat_index = selectedChunk->repeat;
         }
 
@@ -4907,7 +4913,9 @@ gst_mpd_client_stream_seek (GstMpdClient * client, GstActiveStream * stream,
     if (selectedChunk == NULL) {
       stream->segment_index = stream->segments->len;
       stream->segment_repeat_index = 0;
-      GST_DEBUG ("Seek to after last segment");
+      GST_DEBUG ("Seek to after last segment ts=%" GST_TIME_FORMAT,
+          GST_TIME_ARGS (ts)
+          );
       return FALSE;
     }
 
@@ -5230,6 +5238,9 @@ gst_mpd_client_get_next_fragment (GstMpdClient * client,
     }
     GST_DEBUG ("mediaURL = %s", mediaURL);
     GST_DEBUG ("indexURL = %s", indexURL);
+    if (indexURL == NULL) {
+      // GST_WARNING(currentChunk->);
+    }
 
     fragment->timestamp =
         currentChunk->start +
@@ -5501,6 +5512,7 @@ gst_mpd_client_get_next_header (GstMpdClient * client, gchar ** uri,
         cur_seg_template->initialization, stream->cur_representation->id, 0,
         stream->cur_representation->bandwidth, 0);
   }
+  GST_DEBUG ("Init header URI: %s", *uri);
 
   return *uri == NULL ? FALSE : TRUE;
 }
@@ -5535,6 +5547,9 @@ gst_mpd_client_get_next_header_index (GstMpdClient * client, gchar ** uri,
         gst_mpdparser_build_URL_from_template (stream->cur_seg_template->index,
         stream->cur_representation->id, 0,
         stream->cur_representation->bandwidth, 0);
+  }
+  if (*uri != NULL) {
+    GST_DEBUG ("Representation index: %s", *uri);
   }
 
   return *uri == NULL ? FALSE : TRUE;
