@@ -1234,6 +1234,8 @@ gst_dash_demux_stream_update_headers_info (GstAdaptiveDemuxStream * stream)
     stream->fragment.header_uri =
         gst_uri_join_strings (gst_mpdparser_get_baseURL (dashdemux->client,
             dashstream->index), path);
+    GST_DEBUG_OBJECT (stream->demux, "Init header url %s",
+        stream->fragment.header_uri);
     g_free (path);
     path = NULL;
   }
@@ -2499,9 +2501,8 @@ gst_dash_demux_update_manifest_data (GstAdaptiveDemux * demux,
         ts += 10 * GST_USECOND;
         if (!gst_mpd_client_stream_seek (new_client, new_stream,
                 demux->segment.rate >= 0, 0, ts, NULL)) {
-          gst_mpd_client_free (new_client);
-          gst_buffer_unmap (buffer, &mapinfo);
-          return GST_FLOW_EOS;
+          GST_DEBUG_OBJECT (demux,
+              "Cannot seek to current position in stream (likely live stream pending data)");
         };
       }
 
