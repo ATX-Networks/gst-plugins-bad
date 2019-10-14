@@ -2219,6 +2219,8 @@ gst_dash_demux_stream_select_bitrate (GstAdaptiveDemuxStream * stream,
     GstRepresentationNode *rep = g_list_nth_data (rep_list, new_index);
     GST_INFO_OBJECT (demux, "Changing representation idx: %d %d %u",
         dashstream->index, new_index, rep->bandwidth);
+    GST_DEBUG_OBJECT (demux, "Requesting re-download of header");
+    stream->need_header = TRUE;
     if (gst_mpd_client_setup_representation (demux->client, active_stream, rep)) {
       GstCaps *caps;
 
