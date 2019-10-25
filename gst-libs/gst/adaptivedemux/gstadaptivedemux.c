@@ -4229,6 +4229,7 @@ gst_adaptive_demux_stream_advance_fragment_unlocked (GstAdaptiveDemux * demux,
   stream->download_start_time =
       GST_TIME_AS_USECONDS (gst_adaptive_demux_get_monotonic_time (demux));
 
+  stream->need_header = TRUE;
   if (ret == GST_FLOW_OK) {
     if (gst_adaptive_demux_stream_select_bitrate (demux, stream,
             gst_adaptive_demux_stream_update_current_bitrate (demux, stream))) {
