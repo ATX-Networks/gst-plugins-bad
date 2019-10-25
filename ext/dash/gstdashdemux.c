@@ -2219,21 +2219,24 @@ gst_dash_demux_stream_select_bitrate (GstAdaptiveDemuxStream * stream,
     GstRepresentationNode *rep = g_list_nth_data (rep_list, new_index);
     GST_INFO_OBJECT (demux, "Changing representation idx: %d %d %u",
         dashstream->index, new_index, rep->bandwidth);
-    GST_DEBUG_OBJECT (demux, "Requesting re-download of header");
-    stream->need_header = TRUE;
     if (gst_mpd_client_setup_representation (demux->client, active_stream, rep)) {
       GstCaps *caps;
+      gchar *caps_repr;
 
-      GST_INFO_OBJECT (demux, "Switching bitrate to %d",
-          active_stream->cur_representation->bandwidth);
       caps = gst_dash_demux_get_input_caps (demux, active_stream);
       gst_adaptive_demux_stream_set_caps (stream, caps);
+      caps_repr = gst_caps_to_string (caps);
+      GST_INFO_OBJECT (demux, "Switching bitrate to %d and caps %s",
+          active_stream->cur_representation->bandwidth, caps_repr);
+      g_free (caps_repr);
+      stream->need_header = TRUE;
       ret = TRUE;
 
     } else {
       GST_WARNING_OBJECT (demux, "Can not switch representation, aborting...");
     }
   }
+  stream->need_header = TRUE;
 
   if (ret) {
     if (gst_mpd_client_has_isoff_ondemand_profile (demux->client)
