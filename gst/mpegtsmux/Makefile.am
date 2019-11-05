@@ -3,11 +3,14 @@ plugin_LTLIBRARIES = libgstmpegtsmux.la
 SUBDIRS = tsmux
 
 libgstmpegtsmux_la_SOURCES = \
-	mpegtsmux.c \
-	mpegtsmux_aac.c \
-	mpegtsmux_ttxt.c \
-	mpegtsmux_opus.c \
-	mpegtsmux_jpeg2000.c
+  gstmpegtsmuxplugin.c \
+  gstbasetsmux.c \
+  gstbasetsmuxaac.c \
+  gstbasetsmuxopus.c \
+  gstbasetsmuxttxt.c \
+  gstbasetsmuxjpeg2000.c \
+  gstmpegtsmux.c \
+  gstatscmux.c
 
 libgstmpegtsmux_la_CFLAGS = $(GST_PLUGINS_BAD_CFLAGS) $(GST_PLUGINS_BASE_CFLAGS) \
 			    -I$(top_srcdir) \
@@ -20,8 +23,10 @@ libgstmpegtsmux_la_LIBADD = $(top_builddir)/gst/mpegtsmux/tsmux/libtsmux.la \
 libgstmpegtsmux_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 
 noinst_HEADERS = \
-	mpegtsmux.h \
-	mpegtsmux_aac.h \
-	mpegtsmux_ttxt.h \
-	mpegtsmux_opus.h \
-	mpegtsmux_jpeg2000.h
+	gstatscmux.h \
+	gstbasetsmuxaac.h \
+	gstbasetsmux.h \
+	gstbasetsmuxjpeg2000.h \
+	gstbasetsmuxopus.h \
+	gstbasetsmuxttxt.h \
+	gstmpegtsmux.h
