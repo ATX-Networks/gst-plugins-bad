@@ -28,7 +28,7 @@
 #warning "The GStreamer mpegts library is unstable API and may change in future."
 #warning "You can define GST_USE_UNSTABLE_API to avoid this warning."
 #endif
-
+#include <glib-object.h>
 #include <gst/mpegts/mpegts-prelude.h>
 #include <gst/mpegts/gstmpegtsdescriptor.h>
 #include <gst/mpegts/gst-dvb-descriptor.h>

@@ -464,8 +464,8 @@ struct _GstMpegtsDVBLinkageExtendedEvent
  * @transport_stream_id: the transport id
  * @original_network_id: the original network id
  * @service_id: the service id
- * @linkage_type: the type which %linkage_data has
- * @private_data_length: the length for %private_data_bytes
+ * @linkage_type: the type which @linkage_data has
+ * @private_data_length: the length for @private_data_bytes
  * @private_data_bytes: additional data bytes
  */
 struct _GstMpegtsDVBLinkageDescriptor
@@ -763,7 +763,7 @@ typedef enum {
  * @priority: %TRUE High Priority %FALSE Low Priority
  * @time_slicing: %TRUE no time slicing %FALSE time slicing
  * @mpe_fec: %TRUE no mpe-fec is used %FALSE mpe-fec is use
- * @constellation: the constallation
+ * @constellation: the constellation
  * @hierarchy: the hierarchy
  * @code_rate_hp:
  * @code_rate_lp:
