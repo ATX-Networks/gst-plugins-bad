@@ -119,13 +119,22 @@ struct TsMuxProgram {
 
   /* interval between PMT in MPEG PTS clock time */
   guint    pmt_interval;
-  /* last time PMT written in MPEG PTS clock time */
-  gint64   last_pmt_ts;
+
+  /* Next PMT position, 27 MHz */
+  gint64   next_pmt_pcr;
 
   /* program ID for the PAT */
   guint16 pgm_number;
   /* PID to write the PMT */
   guint16 pmt_pid;
+
+  TsMuxSection *scte35_null_section;
+  /* SCTE-35 pid (0 if inactive/unused) */
+  guint16 scte35_pid;
+  /* Interval between SCTE-35 NULL packets in MPEG PTS clock time */
+  guint   scte35_null_interval;
+  /* Next SCTE-35 position, 27 MHz */
+  gint64  next_scte35_pcr;
 
   /* stream which carries the PCR */
   TsMuxStream *pcr_stream;
@@ -160,15 +169,18 @@ struct TsMux {
   gboolean pat_changed;
   /* interval between PAT in MPEG PTS clock time */
   guint    pat_interval;
-  /* last time PAT written in MPEG PTS clock time */
-  gint64   last_pat_ts;
+  /* Next PAT position, 27 MHz */
+  gint64   next_pat_pcr;
+
+  /* interval between PCR in MPEG PTS clock time */
+  guint    pcr_interval;
 
   /* trigger writing Service Information Tables */
   gboolean si_changed;
   /* interval between SIT in MPEG PTS clock time */
   guint    si_interval;
-  /* last time SIT written in MPEG PTS clock time */
-  gint64   last_si_ts;
+  /* Next SIT position, 27 MHz */
+  gint64   next_si_pcr;
 
   /* callback to write finished packet */
   TsMuxWriteFunc write_func;
@@ -185,6 +197,9 @@ struct TsMux {
 
   guint64 bitrate;
   guint64 n_bytes;
+
+  /* For the per-PID continuity counter */
+  guint8 pid_packet_counts[8192];
 };
 
 /* create/free new muxer session */
@@ -207,6 +222,10 @@ void 		tsmux_program_free 		(TsMuxProgram *program);
 void 		tsmux_set_pmt_interval          (TsMuxProgram *program, guint interval);
 guint 		tsmux_get_pmt_interval   	(TsMuxProgram *program);
 void 		tsmux_resend_pmt                (TsMuxProgram *program);
+void            tsmux_program_set_scte35_pid    (TsMuxProgram *program, guint16 pid);
+guint16         tsmux_program_get_scte35_pid    (TsMuxProgram *program);
+void            tsmux_program_set_scte35_interval (TsMuxProgram *mux, guint interval);
+
 
 /* SI table management */
 void            tsmux_set_si_interval           (TsMux *mux, guint interval);
@@ -214,12 +233,16 @@ guint           tsmux_get_si_interval           (TsMux *mux);
 void            tsmux_resend_si                 (TsMux *mux);
 gboolean        tsmux_add_mpegts_si_section     (TsMux * mux, GstMpegtsSection * section);
 
+/* One-time sections */
+gboolean        tsmux_send_section              (TsMux *mux, GstMpegtsSection *section);
+
 /* stream management */
 TsMuxStream *	tsmux_create_stream 		(TsMux *mux, guint stream_type, guint16 pid, gchar *language);
 TsMuxStream *	tsmux_find_stream 		(TsMux *mux, guint16 pid);
 
 void 		tsmux_program_add_stream 	(TsMuxProgram *program, TsMuxStream *stream);
 void 		tsmux_program_set_pcr_stream 	(TsMuxProgram *program, TsMuxStream *stream);
+void    tsmux_set_pcr_interval (TsMux * mux, guint freq);
 
 /* writing stuff */
 gboolean 	tsmux_write_stream_packet 	(TsMux *mux, TsMuxStream *stream);

@@ -206,8 +206,8 @@ struct TsMuxStream {
 
   /* count of programs using this as PCR */
   gint   pcr_ref;
-  /* last time PCR written */
-  gint64 last_pcr;
+  /* Next time PCR should be written */
+  gint64 next_pcr;
 
   /* audio parameters for stream
    * (used in stream descriptor) */
@@ -268,7 +268,8 @@ gint 		tsmux_stream_bytes_avail 	(TsMuxStream *stream);
 gboolean 	tsmux_stream_initialize_pes_packet (TsMuxStream *stream);
 gboolean 	tsmux_stream_get_data 		(TsMuxStream *stream, guint8 *buf, guint len);
 
-guint64 	tsmux_stream_get_pts 		(TsMuxStream *stream);
+gint64 	tsmux_stream_get_pts 		(TsMuxStream *stream);
+gint64 	tsmux_stream_get_dts 		(TsMuxStream *stream);
 
 G_END_DECLS
 

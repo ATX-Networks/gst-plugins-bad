@@ -137,7 +137,23 @@ gst_base_ts_mux_pad_reset (GstBaseTsMuxPad * pad)
 static GstFlowReturn
 gst_base_ts_mux_pad_flush (GstAggregatorPad * agg_pad, GstAggregator * agg)
 {
-  gst_base_ts_mux_pad_reset (GST_BASE_TS_MUX_PAD (agg_pad));
+  GList *cur;
+  GstBaseTsMux *mux = GST_BASE_TS_MUX (agg);
+
+  /* Send initial segments again after a flush-stop, and also resend the
+   * header sections */
+  mux->first = TRUE;
+
+  /* output PAT, SI tables */
+  tsmux_resend_pat (mux->tsmux);
+  tsmux_resend_si (mux->tsmux);
+
+  /* output PMT for each program */
+  for (cur = mux->tsmux->programs; cur; cur = cur->next) {
+    TsMuxProgram *program = (TsMuxProgram *) cur->data;
+
+    tsmux_resend_pmt (program);
+  }
 
   return GST_FLOW_OK;
 }
@@ -178,7 +194,12 @@ enum
   PROP_ALIGNMENT,
   PROP_SI_INTERVAL,
   PROP_BITRATE,
+  PROP_PCR_INTERVAL,
+  PROP_SCTE_35_PID,
+  PROP_SCTE_35_NULL_INTERVAL
 };
+
+#define DEFAULT_SCTE_35_PID 0
 
 #define BASETSMUX_DEFAULT_ALIGNMENT    -1
 
@@ -270,11 +291,22 @@ gst_base_ts_mux_set_header_on_caps (GstBaseTsMux * mux)
   gst_caps_unref (caps);
 }
 
+static gboolean
+steal_si_section (GstMpegtsSectionType * type, TsMuxSection * section,
+    TsMux * mux)
+{
+  g_hash_table_insert (mux->si_sections, type, section);
+
+  return TRUE;
+}
+
 static void
 gst_base_ts_mux_reset (GstBaseTsMux * mux, gboolean alloc)
 {
   GstBuffer *buf;
   GstBaseTsMuxClass *klass = GST_BASE_TS_MUX_GET_CLASS (mux);
+  GHashTable *si_sections = NULL;
+  GList *l;
 
   mux->first = TRUE;
   mux->last_flow_ret = GST_FLOW_OK;
@@ -290,6 +322,9 @@ gst_base_ts_mux_reset (GstBaseTsMux * mux, gboolean alloc)
     gst_adapter_clear (mux->out_adapter);
 
   if (mux->tsmux) {
+    if (mux->tsmux->si_sections)
+      si_sections = g_hash_table_ref (mux->tsmux->si_sections);
+
     tsmux_free (mux->tsmux);
     mux->tsmux = NULL;
   }
@@ -305,11 +340,23 @@ gst_base_ts_mux_reset (GstBaseTsMux * mux, gboolean alloc)
   gst_event_replace (&mux->force_key_unit_event, NULL);
   gst_buffer_replace (&mux->out_buffer, NULL);
 
+  for (l = GST_ELEMENT (mux)->sinkpads; l; l = l->next) {
+    gst_base_ts_mux_pad_reset (GST_BASE_TS_MUX_PAD (l->data));
+  }
+
   if (alloc) {
     g_assert (klass->create_ts_mux);
 
     mux->tsmux = klass->create_ts_mux (mux);
+
+    /* Preserve user-specified sections across resets */
+    if (si_sections)
+      g_hash_table_foreach_steal (si_sections, (GHRFunc) steal_si_section,
+          mux->tsmux);
   }
+
+  if (si_sections)
+    g_hash_table_unref (si_sections);
 
   if (klass->reset)
     klass->reset (mux);
@@ -683,21 +730,26 @@ gst_base_ts_mux_create_streams (GstBaseTsMux * mux)
       if (ts_pad->prog == NULL)
         goto no_program;
       tsmux_set_pmt_interval (ts_pad->prog, mux->pmt_interval);
-      g_hash_table_insert (mux->programs,
-          GINT_TO_POINTER (ts_pad->prog_id), ts_pad->prog);
-
-      /* Take the first stream of the program for the PCR */
-      GST_DEBUG_OBJECT (ts_pad,
-          "Use stream (pid=%d) from pad as PCR for program (prog_id = %d)",
-          ts_pad->pid, ts_pad->prog_id);
-
-      tsmux_program_set_pcr_stream (ts_pad->prog, ts_pad->stream);
+      tsmux_program_set_scte35_pid (ts_pad->prog, mux->scte35_pid);
+      tsmux_program_set_scte35_interval (ts_pad->prog,
+          mux->scte35_null_interval);
+      g_hash_table_insert (mux->programs, GINT_TO_POINTER (ts_pad->prog_id),
+          ts_pad->prog);
     }
 
     if (ts_pad->stream == NULL) {
       ret = gst_base_ts_mux_create_stream (mux, ts_pad);
       if (ret != GST_FLOW_OK)
         goto no_stream;
+    }
+
+    if (ts_pad->prog->pcr_stream == NULL) {
+      /* Take the first stream of the program for the PCR */
+      GST_DEBUG_OBJECT (ts_pad,
+          "Use stream (pid=%d) from pad as PCR for program (prog_id = %d)",
+          ts_pad->pid, ts_pad->prog_id);
+
+      tsmux_program_set_pcr_stream (ts_pad->prog, ts_pad->stream);
     }
 
     /* Check for user-specified PCR PID */
@@ -973,7 +1025,8 @@ new_packet_cb (GstBuffer * buf, void *user_data, gint64 new_pcr)
 
   gst_buffer_map (buf, &map, GST_MAP_READWRITE);
 
-  GST_BUFFER_PTS (buf) = mux->last_ts;
+  if (!GST_CLOCK_TIME_IS_VALID (GST_BUFFER_PTS (buf)))
+    GST_BUFFER_PTS (buf) = mux->last_ts;
 
   /* do common init (flags and streamheaders) */
   new_packet_common_init (mux, buf, map.data, map.size);
@@ -1006,6 +1059,7 @@ gst_base_ts_mux_aggregate_buffer (GstBaseTsMux * mux,
   gint64 dts = GST_CLOCK_STIME_NONE;
   gboolean delta = TRUE, header = FALSE;
   StreamData *stream_data;
+  GstMpegtsSection *scte_section = NULL;
 
   GST_DEBUG_OBJECT (mux, "Pads collected");
 
@@ -1081,6 +1135,16 @@ gst_base_ts_mux_aggregate_buffer (GstBaseTsMux * mux,
   }
 
   GST_DEBUG_OBJECT (best, "Chose stream for output (PID: 0x%04x)", best->pid);
+
+  GST_OBJECT_LOCK (mux);
+  scte_section = mux->pending_scte35_section;
+  mux->pending_scte35_section = NULL;
+  GST_OBJECT_UNLOCK (mux);
+  if (G_UNLIKELY (scte_section)) {
+    GST_DEBUG_OBJECT (mux, "Sending pending SCTE section");
+    if (!tsmux_send_section (mux->tsmux, scte_section))
+      GST_ERROR_OBJECT (mux, "Error sending SCTE section !");
+  }
 
   if (GST_CLOCK_TIME_IS_VALID (GST_BUFFER_PTS (buf))) {
     pts = GSTTIME_TO_MPEGTIME (GST_BUFFER_PTS (buf));
@@ -1199,18 +1263,29 @@ gst_base_ts_mux_send_event (GstElement * element, GstEvent * event)
   GstBaseTsMux *mux = GST_BASE_TS_MUX (element);
 
   section = gst_event_parse_mpegts_section (event);
-  gst_event_unref (event);
 
   if (section) {
     GST_DEBUG ("Received event with mpegts section");
 
-    /* TODO: Check that the section type is supported */
-    tsmux_add_mpegts_si_section (mux->tsmux, section);
+    if (section->section_type == GST_MPEGTS_SECTION_SCTE_SIT) {
+      /* Will be sent from the streaming threads */
+      GST_DEBUG_OBJECT (mux, "Storing SCTE event");
+      GST_OBJECT_LOCK (element);
+      if (mux->pending_scte35_section)
+        gst_mpegts_section_unref (mux->pending_scte35_section);
+      mux->pending_scte35_section = section;
+      GST_OBJECT_UNLOCK (element);
+    } else {
+      /* TODO: Check that the section type is supported */
+      tsmux_add_mpegts_si_section (mux->tsmux, section);
+    }
+
+    gst_event_unref (event);
 
     return TRUE;
   }
 
-  return FALSE;
+  return GST_ELEMENT_CLASS (parent_class)->send_event (element, event);
 }
 
 /* GstAggregator implementation */
@@ -1299,25 +1374,6 @@ gst_base_ts_mux_sink_event (GstAggregator * agg, GstAggregatorPad * agg_pad,
          GST_COLLECT_PADS_STATE_SET (data, GST_COLLECT_PADS_STATE_LOCKED);
          }
        */
-      break;
-    }
-    case GST_EVENT_FLUSH_STOP:{
-      GList *cur;
-
-      /* Send initial segments again after a flush-stop, and also resend the
-       * header sections */
-      mux->first = TRUE;
-
-      /* output PAT, SI tables */
-      tsmux_resend_pat (mux->tsmux);
-      tsmux_resend_si (mux->tsmux);
-
-      /* output PMT for each program */
-      for (cur = mux->tsmux->programs; cur; cur = cur->next) {
-        TsMuxProgram *program = (TsMuxProgram *) cur->data;
-
-        tsmux_resend_pmt (program);
-      }
       break;
     }
     default:
@@ -1677,6 +1733,17 @@ gst_base_ts_mux_set_property (GObject * object, guint prop_id,
       if (mux->tsmux)
         tsmux_set_bitrate (mux->tsmux, mux->bitrate);
       break;
+    case PROP_PCR_INTERVAL:
+      mux->pcr_interval = g_value_get_uint (value);
+      if (mux->tsmux)
+        tsmux_set_pcr_interval (mux->tsmux, mux->pcr_interval);
+      break;
+    case PROP_SCTE_35_PID:
+      mux->scte35_pid = g_value_get_uint (value);
+      break;
+    case PROP_SCTE_35_NULL_INTERVAL:
+      mux->scte35_null_interval = g_value_get_uint (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -1707,6 +1774,15 @@ gst_base_ts_mux_get_property (GObject * object, guint prop_id,
       break;
     case PROP_BITRATE:
       g_value_set_uint64 (value, mux->bitrate);
+      break;
+    case PROP_PCR_INTERVAL:
+      g_value_set_uint (value, mux->pcr_interval);
+      break;
+    case PROP_SCTE_35_PID:
+      g_value_set_uint (value, mux->scte35_pid);
+      break;
+    case PROP_SCTE_35_NULL_INTERVAL:
+      g_value_set_uint (value, mux->scte35_null_interval);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1832,8 +1908,28 @@ gst_base_ts_mux_class_init (GstBaseTsMuxClass * klass)
   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_BITRATE,
       g_param_spec_uint64 ("bitrate", "Bitrate (in bits per second)",
           "Set the target bitrate, will insert null packets as padding "
-          " to achieve multiplex-wide constant bitrate",
+          " to achieve multiplex-wide constant bitrate (0 means no padding)",
           0, G_MAXUINT64, TSMUX_DEFAULT_BITRATE,
+          (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_PCR_INTERVAL,
+      g_param_spec_uint ("pcr-interval", "PCR interval",
+          "Set the interval (in ticks of the 90kHz clock) for writing PCR",
+          1, G_MAXUINT, TSMUX_DEFAULT_PCR_INTERVAL,
+          (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_SCTE_35_PID,
+      g_param_spec_uint ("scte-35-pid", "SCTE-35 PID",
+          "PID to use for inserting SCTE-35 packets (0: unused)",
+          0, G_MAXUINT, DEFAULT_SCTE_35_PID,
+          (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
+
+  g_object_class_install_property (G_OBJECT_CLASS (klass),
+      PROP_SCTE_35_NULL_INTERVAL, g_param_spec_uint ("scte-35-null-interval",
+          "SCTE-35 NULL packet interval",
+          "Set the interval (in ticks of the 90kHz clock) for writing SCTE-35 NULL (heartbeat) packets."
+          " (only valid if scte-35-pid is different from 0)", 1, G_MAXUINT,
+          TSMUX_DEFAULT_SCTE_35_NULL_INTERVAL,
           (GParamFlags) (G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)));
 
   gst_element_class_add_static_pad_template_with_gtype (gstelement_class,
@@ -1849,9 +1945,12 @@ gst_base_ts_mux_init (GstBaseTsMux * mux)
   mux->pat_interval = TSMUX_DEFAULT_PAT_INTERVAL;
   mux->pmt_interval = TSMUX_DEFAULT_PMT_INTERVAL;
   mux->si_interval = TSMUX_DEFAULT_SI_INTERVAL;
+  mux->pcr_interval = TSMUX_DEFAULT_PCR_INTERVAL;
   mux->prog_map = NULL;
   mux->alignment = BASETSMUX_DEFAULT_ALIGNMENT;
   mux->bitrate = TSMUX_DEFAULT_BITRATE;
+  mux->scte35_pid = DEFAULT_SCTE_35_PID;
+  mux->scte35_null_interval = TSMUX_DEFAULT_SCTE_35_NULL_INTERVAL;
 
   mux->packet_size = GST_BASE_TS_MUX_NORMAL_PACKET_LENGTH;
   mux->automatic_alignment = 0;
