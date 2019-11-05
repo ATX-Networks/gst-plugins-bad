@@ -5,6 +5,7 @@ libgstmpegts_@GST_API_VERSION@_la_SOURCES = \
 	gstmpegtsdescriptor.c \
 	gst-dvb-descriptor.c \
 	gst-dvb-section.c \
+	gst-scte-section.c \
 	gst-atsc-section.c
 
 libgstmpegts_@GST_API_VERSION@includedir = \
