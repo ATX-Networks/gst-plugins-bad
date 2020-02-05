@@ -696,6 +696,7 @@ gst_base_ts_mux_create_streams (GstBaseTsMux * mux)
     GstBaseTsMuxPad *ts_pad = GST_BASE_TS_MUX_PAD (walk->data);
     gchar *name = NULL;
     gchar *pcr_name;
+    gint pmt_pid;
 
     walk = g_list_next (walk);
 
@@ -729,6 +730,29 @@ gst_base_ts_mux_create_streams (GstBaseTsMux * mux)
       ts_pad->prog = tsmux_program_new (mux->tsmux, ts_pad->prog_id);
       if (ts_pad->prog == NULL)
         goto no_program;
+      if (mux->prog_map) {
+        char *pmt_name = g_strdup_printf ("PMT_%d", ts_pad->prog->pgm_number);
+        if (gst_structure_has_field (mux->prog_map, pmt_name)) {
+          char *prog_map_desc = gst_structure_to_string (mux->prog_map);
+          GValue *pmt_pid_value;
+          if (prog_map_desc) {
+            GST_WARNING_OBJECT (mux, "Program structure: %s", prog_map_desc);
+            g_free (prog_map_desc);
+          }
+          pmt_pid_value = gst_structure_get_value (mux->prog_map, pmt_name);
+          if (!pmt_pid_value) {
+            GST_ERROR_OBJECT (mux, "Unable to get PMT pid on program %d",
+                ts_pad->prog->pgm_number);
+          } else {
+            pmt_pid = g_value_get_int (pmt_pid_value);
+            ts_pad->prog->pmt_pid = (guint16) (pmt_pid & 0xffff);
+            GST_WARNING_OBJECT (mux, "Set pmt pid on %d to %u",
+                ts_pad->prog->pgm_number, ts_pad->prog->pmt_pid);
+          }
+        }
+        g_free (pmt_name);
+      }
+
       tsmux_set_pmt_interval (ts_pad->prog, mux->pmt_interval);
       tsmux_program_set_scte35_pid (ts_pad->prog, mux->scte35_pid);
       tsmux_program_set_scte35_interval (ts_pad->prog,
@@ -784,6 +808,28 @@ no_stream:
   }
 }
 
+const gboolean
+is_pmt_pid (GstBaseTsMux * mux, guint pid)
+{
+  /* Check if given pid is a PMT pid in any program on mux 
+
+     Checks explicitly that the pid is assigned to be the
+     PMT of a given program, it does *not* rely on having a
+     specific range of pids assigned as PMT (32-63)
+   */
+  guint program = 0;
+  GList *cur;
+  // Technically this should lock the list, but we should
+  // be locked at a far higher level before we get to here..
+  for (cur = mux->tsmux->programs; cur; cur = cur->next) {
+    TsMuxProgram *program = (TsMuxProgram *) cur->data;
+    if (program->pmt_pid == pid) {
+      return TRUE;
+    }
+  }
+  return FALSE;
+}
+
 static void
 new_packet_common_init (GstBaseTsMux * mux, GstBuffer * buf, guint8 * data,
     guint len)
@@ -793,8 +839,16 @@ new_packet_common_init (GstBaseTsMux * mux, GstBuffer * buf, guint8 * data,
 
   if (!mux->streamheader_sent && data) {
     guint pid = ((data[1] & 0x1f) << 8) | data[2];
-    /* if it's a PAT or a PMT */
-    if (pid == 0x00 || (pid >= TSMUX_START_PMT_PID && pid < TSMUX_START_ES_PID)) {
+    /* if it's a PAT or a PMT
+
+       PAT => pid == 0
+       PMT => fudged to mean "in range 32-63" originally, but
+       if we allow control, then we need to check and see
+       if the pid is one of *any* of our program's pmt_pids
+     */
+    if (pid == 0x00 || (pid >= TSMUX_START_PMT_PID && pid < TSMUX_START_ES_PID)
+        || is_pmt_pid (mux, pid)
+        ) {
       GstBuffer *hbuf;
 
       if (!buf) {
